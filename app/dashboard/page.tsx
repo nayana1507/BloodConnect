@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { UserProfile } from '@/lib/types';
@@ -12,56 +12,86 @@ import Link from 'next/link';
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userData, setUserData] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchUserProfile = async () => {
-      if (!user) return;
+    if (!user?.uid) {
+      setLoading(false);
+      return;
+    }
 
-      try {
-        const docRef = doc(db, 'users', user.uid);
-        const docSnap = await getDoc(docRef);
-        
+    const userRef = doc(db, 'users', user.uid);
+
+    const unsubscribe = onSnapshot(
+      userRef,
+      (docSnap) => {
         if (docSnap.exists()) {
-          setUserProfile(docSnap.data() as UserProfile);
+          const data = docSnap.data() as UserProfile;
+          setUserData(data);
+        } else {
+          setUserData(null);
         }
-      } catch (error) {
-        console.error('Error fetching profile:', error);
-      } finally {
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Dashboard real-time error:', err);
+        setError('Failed to load profile. Please try refreshing.');
         setLoading(false);
       }
-    };
+    );
 
-    fetchUserProfile();
-  }, [user]);
+    return () => unsubscribe();
+  }, [user?.uid]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-foreground">Loading dashboard...</p>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center space-y-4">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-muted-foreground">Loading your dashboard...</p>
         </div>
       </div>
     );
   }
 
+  if (error || !userData) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle className="text-destructive">Error</CardTitle>
+            <CardDescription>{error || 'Profile not found'}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={() => window.location.reload()}>Refresh</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Safe status computation with fallback and color
+  const displayStatus = userData.bloodStatus || (userData.isAvailable ? 'Available' : 'Unavailable');
+  const statusColor = displayStatus === 'Available' ? 'text-green-600' : 'text-red-600';
+
   return (
     <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
-      {/* Welcome Section */}
+      {/* Welcome */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold text-foreground">
-          Welcome, {userProfile?.name}
+        <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+          Welcome, {userData.name || 'Donor'}
         </h1>
-        <p className="text-foreground/60">
-          Blood Type: <span className="font-semibold text-primary text-lg">{userProfile?.bloodType}</span>
+        <p className="text-lg text-muted-foreground">
+          Blood Type:{' '}
+          <span className="font-semibold text-primary">{userData.bloodType || '—'}</span>
         </p>
       </div>
 
-      {/* Quick Stats */}
+      {/* Quick Stats Cards */}
       <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="border-border">
+        <Card className="border-border hover:shadow-md transition-shadow">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Heart className="w-4 h-4 text-primary" />
@@ -69,33 +99,39 @@ export default function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground">
-              {userProfile?.totalDonations || 0}
+            <div className="text-2xl font-bold">
+              {userData.totalDonations ?? 0}
             </div>
-            <p className="text-xs text-foreground/60 mt-1">
-              Lives saved
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Lives potentially saved</p>
           </CardContent>
         </Card>
 
-        <Card className="border-border">
+        <Card className="border-border hover:shadow-md transition-shadow">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Droplet className="w-4 h-4 text-primary" />
-              Blood Status
+              Donation Status
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground">
-              {userProfile?.isAvailable ? 'Available' : 'Unavailable'}
+            <div className={`text-2xl font-bold ${statusColor}`}>
+              {displayStatus}
             </div>
-            <p className="text-xs text-foreground/60 mt-1">
-              {userProfile?.isAvailable ? 'Ready to donate' : 'Not available'}
+            <p className="text-xs text-muted-foreground mt-1">
+              {displayStatus === 'Available'
+                ? 'Ready to donate'
+                : userData.nextAvailableDate
+                ? `Available again on ${new Date(
+                    typeof userData.nextAvailableDate === 'string'
+                      ? userData.nextAvailableDate
+                      : userData.nextAvailableDate.toDate?.() || userData.nextAvailableDate
+                  ).toLocaleDateString('en-IN')}`
+                : 'Not available'}
             </p>
           </CardContent>
         </Card>
 
-        <Card className="border-border">
+        <Card className="border-border hover:shadow-md transition-shadow">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Calendar className="w-4 h-4 text-primary" />
@@ -103,16 +139,26 @@ export default function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground">
-              {userProfile?.lastDonationDate ? new Date(userProfile.lastDonationDate).toLocaleDateString() : 'Never'}
+            <div className="text-2xl font-bold">
+              {userData.lastDonation ? (
+                new Date(
+                  typeof userData.lastDonation === 'string'
+                    ? userData.lastDonation
+                    : userData.lastDonation.toDate?.() || userData.lastDonation
+                ).toLocaleDateString('en-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                })
+              ) : (
+                'Never'
+              )}
             </div>
-            <p className="text-xs text-foreground/60 mt-1">
-              Donation history
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Donation history</p>
           </CardContent>
         </Card>
 
-        <Card className="border-border">
+        <Card className="border-border hover:shadow-md transition-shadow">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Users className="w-4 h-4 text-primary" />
@@ -120,98 +166,90 @@ export default function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground capitalize">
-              {userProfile?.role}
-            </div>
-            <p className="text-xs text-foreground/60 mt-1">
-              Account type
-            </p>
+            <div className="text-2xl font-bold capitalize">{userData.role || '—'}</div>
+            <p className="text-xs text-muted-foreground mt-1">Account type</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Quick Actions */}
+      {/* Quick Action Cards */}
       <div className="grid md:grid-cols-3 gap-6">
-        <Card className="border-border">
+        <Card className="border-border hover:shadow-md transition-shadow">
           <CardHeader>
             <CardTitle>Find Donors</CardTitle>
             <CardDescription>
-              {userProfile?.role === 'recipient'
-                ? 'Find compatible blood donors'
-                : 'View other donors in your area'}
+              {userData.role === 'recipient'
+                ? 'Search for compatible donors nearby'
+                : 'Browse donors in your area'}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Link href="/dashboard/donors">
-              <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                Browse Donors
-              </Button>
+              <Button className="w-full">Browse Donors</Button>
             </Link>
           </CardContent>
         </Card>
 
-        <Card className="border-border">
+        <Card className="border-border hover:shadow-md transition-shadow">
           <CardHeader>
             <CardTitle>Blood Requests</CardTitle>
             <CardDescription>
-              {userProfile?.role === 'recipient'
-                ? 'Create or manage requests'
-                : 'View urgent blood requests'}
+              {userData.role === 'recipient'
+                ? 'Create or manage your requests'
+                : 'See urgent requests from recipients'}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Link href="/dashboard/requests">
-              <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                View Requests
-              </Button>
+              <Button className="w-full">View Requests</Button>
             </Link>
           </CardContent>
         </Card>
 
-        <Card className="border-border">
+        <Card className="border-border hover:shadow-md transition-shadow">
           <CardHeader>
             <CardTitle>Messages</CardTitle>
-            <CardDescription>
-              Stay connected with donors/recipients
-            </CardDescription>
+            <CardDescription>Chat with donors or recipients</CardDescription>
           </CardHeader>
           <CardContent>
             <Link href="/dashboard/messages">
-              <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                Open Chat
-              </Button>
+              <Button className="w-full">Open Messages</Button>
             </Link>
           </CardContent>
         </Card>
       </div>
 
-      {/* Availability Status */}
-      {userProfile?.role === 'donor' && (
-        <Card className="border-border bg-secondary/5">
+      {/* Availability Notice (for donors) */}
+      {userData.role === 'donor' && (
+        <Card className="border-border bg-muted/30">
           <CardHeader>
-            <CardTitle className="text-lg">Donation Availability</CardTitle>
+            <CardTitle className="text-lg">Your Donation Availability</CardTitle>
             <CardDescription>
-              Toggle your availability to help those in need
+              Control whether you're currently open to donate
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-semibold text-foreground">
-                  {userProfile.isAvailable ? 'You are available to donate' : 'You are currently unavailable'}
-                </p>
-                <p className="text-sm text-foreground/60 mt-1">
-                  {userProfile.isAvailable
-                    ? 'Recipients in need can contact you about blood donations'
-                    : 'Update your profile when you are ready to donate'}
-                </p>
-              </div>
-              <Link href="/dashboard/profile">
-                <Button variant="outline" className="border-border bg-transparent">
-                  Update Profile
-                </Button>
-              </Link>
+          <CardContent className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <p className={`font-semibold ${statusColor}`}>
+                {displayStatus === 'Available'
+                  ? 'You are currently available to donate'
+                  : 'You are currently unavailable'}
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {displayStatus === 'Available'
+                  ? 'Recipients can contact you for donations'
+                  : userData.nextAvailableDate
+                  ? `Next available: ${new Date(
+                      typeof userData.nextAvailableDate === 'string'
+                        ? userData.nextAvailableDate
+                        : userData.nextAvailableDate.toDate?.() || userData.nextAvailableDate
+                    ).toLocaleDateString('en-IN')}`
+                  : 'Update your profile when ready'}
+              </p>
             </div>
+            <Button variant="outline" asChild>
+              <Link href="/dashboard/profile">Update Profile</Link>
+            </Button>
           </CardContent>
         </Card>
       )}

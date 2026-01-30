@@ -1,14 +1,22 @@
 import { db } from '@/lib/firebase';
-import { collection, addDoc, query, where, getDocs, updateDoc, doc, onSnapshot, or, DocumentData, QuerySnapshot } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  getDocs,
+  updateDoc,
+  doc,
+  onSnapshot,
+  or,
+  DocumentData,
+  QuerySnapshot,
+} from 'firebase/firestore';
 import { Message } from '@/lib/types';
 
 export const messageService = {
   // Send a message
-  async sendMessage(
-    senderId: string,
-    recipientId: string,
-    content: string
-  ): Promise<string> {
+  async sendMessage(senderId: string, recipientId: string, content: string): Promise<string> {
     try {
       const messageData = {
         senderId,
@@ -31,21 +39,19 @@ export const messageService = {
     try {
       const q = query(
         collection(db, 'messages'),
-        or(
-          where('senderId', '==', userId1),
-          where('recipientId', '==', userId1)
-        )
+        or(where('senderId', '==', userId1), where('recipientId', '==', userId1)),
       );
 
       const querySnapshot = await getDocs(q);
       const messages = querySnapshot.docs
-        .map(doc => ({
+        .map((doc) => ({
           id: doc.id,
-          ...doc.data()
+          ...doc.data(),
         } as Message))
-        .filter(msg => 
-          (msg.senderId === userId1 && msg.recipientId === userId2) ||
-          (msg.senderId === userId2 && msg.recipientId === userId1)
+        .filter(
+          (msg) =>
+            (msg.senderId === userId1 && msg.recipientId === userId2) ||
+            (msg.senderId === userId2 && msg.recipientId === userId1),
         )
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
@@ -56,27 +62,30 @@ export const messageService = {
     }
   },
 
-  // Get all conversations for a user
+  // Get all conversations for a user (last message per conversation)
   async getUserConversations(userId: string): Promise<Map<string, Message>> {
     try {
       const q = query(
         collection(db, 'messages'),
-        or(
-          where('senderId', '==', userId),
-          where('recipientId', '==', userId)
-        )
+        or(where('senderId', '==', userId), where('recipientId', '==', userId)),
       );
 
       const querySnapshot = await getDocs(q);
       const conversationMap = new Map<string, Message>();
 
-      querySnapshot.docs.forEach(doc => {
-        const message = doc.data() as Message;
+      querySnapshot.docs.forEach((doc) => {
+        const message = {
+          id: doc.id,
+          ...doc.data(),
+        } as Message;
+
         const otherId = message.senderId === userId ? message.recipientId : message.senderId;
 
-        if (!conversationMap.has(otherId) || 
-            new Date(message.createdAt) > new Date(conversationMap.get(otherId)!.createdAt)) {
-          conversationMap.set(otherId, { id: doc.id, ...message });
+        if (
+          !conversationMap.has(otherId) ||
+          new Date(message.createdAt) > new Date(conversationMap.get(otherId)!.createdAt)
+        ) {
+          conversationMap.set(otherId, message);
         }
       });
 
@@ -87,29 +96,27 @@ export const messageService = {
     }
   },
 
-  // Subscribe to conversation messages
+  // Real-time subscription to conversation
   subscribeToConversation(
     userId1: string,
     userId2: string,
-    callback: (messages: Message[]) => void
-  ): (() => void) {
+    callback: (messages: Message[]) => void,
+  ): () => void {
     const q = query(
       collection(db, 'messages'),
-      or(
-        where('senderId', '==', userId1),
-        where('recipientId', '==', userId1)
-      )
+      or(where('senderId', '==', userId1), where('recipientId', '==', userId1)),
     );
 
     const unsubscribe = onSnapshot(q, (querySnapshot: QuerySnapshot<DocumentData>) => {
       const messages = querySnapshot.docs
-        .map(doc => ({
+        .map((doc) => ({
           id: doc.id,
-          ...doc.data()
+          ...doc.data(),
         } as Message))
-        .filter(msg => 
-          (msg.senderId === userId1 && msg.recipientId === userId2) ||
-          (msg.senderId === userId2 && msg.recipientId === userId1)
+        .filter(
+          (msg) =>
+            (msg.senderId === userId1 && msg.recipientId === userId2) ||
+            (msg.senderId === userId2 && msg.recipientId === userId1),
         )
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
@@ -133,18 +140,22 @@ export const messageService = {
   // Get unread message count
   async getUnreadCount(userId: string, fromUserId?: string): Promise<number> {
     try {
-      const q = fromUserId
-        ? query(
-            collection(db, 'messages'),
-            where('recipientId', '==', userId),
-            where('senderId', '==', fromUserId),
-            where('isRead', '==', false)
-          )
-        : query(
-            collection(db, 'messages'),
-            where('recipientId', '==', userId),
-            where('isRead', '==', false)
-          );
+      let q;
+
+      if (fromUserId) {
+        q = query(
+          collection(db, 'messages'),
+          where('recipientId', '==', userId),
+          where('senderId', '==', fromUserId),
+          where('isRead', '==', false),
+        );
+      } else {
+        q = query(
+          collection(db, 'messages'),
+          where('recipientId', '==', userId),
+          where('isRead', '==', false),
+        );
+      }
 
       const querySnapshot = await getDocs(q);
       return querySnapshot.size;

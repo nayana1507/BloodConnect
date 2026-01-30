@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -10,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { BloodRequest, UserProfile } from '@/lib/types';
 import { Droplet, Calendar, AlertCircle, User } from 'lucide-react';
 import Link from 'next/link';
+import { offerBloodDonation } from '@/lib/services/donationService'; // ← NEW import
+import { toast } from 'sonner'; // assuming sonner is set up
 
 const urgencyColors = {
   low: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
@@ -27,9 +30,11 @@ const statusColors = {
 
 export default function RequestsPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const [requests, setRequests] = useState<BloodRequest[]>([]);
   const [recipientNames, setRecipientNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [offeringId, setOfferingId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchRequests = async () => {
@@ -40,10 +45,11 @@ export default function RequestsPage() {
         const q = query(requestsRef, where('status', '==', 'open'));
         const querySnapshot = await getDocs(q);
 
-        const allRequests = querySnapshot.docs.map(doc => ({id: 
-          doc.id,
-          ...doc.data()
+        const allRequests = querySnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
         })) as BloodRequest[];
+
         setRequests(allRequests);
 
         // Fetch recipient names
@@ -51,12 +57,13 @@ export default function RequestsPage() {
         const names: Record<string, string> = {};
 
         for (const request of allRequests) {
-          if (!names[request.recipientId]) {
-            const userQuery = query(usersRef, where('id', '==', request.recipientId));
+          const recipientId = request.recipientId;
+          if (recipientId && !names[recipientId]) {
+            const userQuery = query(usersRef, where('uid', '==', recipientId)); // adjust field if different
             const userDocs = await getDocs(userQuery);
             if (!userDocs.empty) {
               const userData = userDocs.docs[0].data() as UserProfile;
-              names[request.recipientId] = userData.name;
+              names[recipientId] = userData.name || 'Unknown User';
             }
           }
         }
@@ -64,6 +71,7 @@ export default function RequestsPage() {
         setRecipientNames(names);
       } catch (error) {
         console.error('Error fetching requests:', error);
+        toast.error('Failed to load blood requests');
       } finally {
         setLoading(false);
       }
@@ -71,6 +79,42 @@ export default function RequestsPage() {
 
     fetchRequests();
   }, [user]);
+
+  const handleOfferBlood = async (request: BloodRequest) => {
+    if (!user) {
+      toast.error('Please sign in to offer blood');
+      return;
+    }
+
+    if (offeringId) return;
+
+    setOfferingId(request.id);
+
+    try {
+      await offerBloodDonation({
+        donorId: user.uid,
+        requestId: request.id,
+        units: 1,
+        date: new Date(),
+      });
+
+      toast.success('Blood offer submitted successfully!');
+
+      // Optimistic update of displayed quantity
+      setRequests((prev) =>
+        prev.map((r) =>
+          r.id === request.id
+            ? { ...r, quantity: Math.max(0, (r.quantity || 1) - 1) }
+            : r
+        )
+      );
+    } catch (err: any) {
+      console.error('Offer failed:', err);
+      toast.error(err.message || 'Failed to offer blood. Please try again.');
+    } finally {
+      setOfferingId(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -103,12 +147,8 @@ export default function RequestsPage() {
         <Card className="border-border">
           <CardContent className="pt-12 text-center">
             <Droplet className="w-12 h-12 text-muted-foreground/50 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-2">
-              No active requests
-            </h3>
-            <p className="text-foreground/60 mb-4">
-              There are currently no open blood requests
-            </p>
+            <h3 className="text-lg font-semibold text-foreground mb-2">No active requests</h3>
+            <p className="text-foreground/60 mb-4">There are currently no open blood requests</p>
             <Link href="/dashboard/requests/new">
               <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
                 Create a Request
@@ -118,8 +158,11 @@ export default function RequestsPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {requests.map(request => (
-            <Card key={request.id} className="border-border overflow-hidden hover:shadow-lg transition-shadow">
+          {requests.map((request) => (
+            <Card
+              key={request.id}
+              className="border-border overflow-hidden hover:shadow-lg transition-shadow"
+            >
               <CardHeader className="pb-4">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
@@ -140,11 +183,12 @@ export default function RequestsPage() {
                   </div>
                 </div>
               </CardHeader>
+
               <CardContent className="space-y-4">
                 <div className="grid md:grid-cols-2 gap-4 text-sm">
                   <div className="flex items-center gap-3 text-foreground/70">
                     <Droplet className="w-4 h-4 text-primary flex-shrink-0" />
-                    <span>{request.quantity} units needed</span>
+                    <span>{request.quantity ?? request.unitsNeeded ?? '?'} units needed</span>
                   </div>
                   <div className="flex items-center gap-3 text-foreground/70">
                     <Calendar className="w-4 h-4 text-primary flex-shrink-0" />
@@ -156,21 +200,30 @@ export default function RequestsPage() {
                       {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
                     </Badge>
                   </div>
-                  {request.matchedDonors.length > 0 && (
+                  {request.matchedDonors?.length > 0 && (
                     <div className="flex items-center gap-3 text-foreground/70">
                       <User className="w-4 h-4 text-primary flex-shrink-0" />
-                      <span>{request.matchedDonors.length} donor{request.matchedDonors.length !== 1 ? 's' : ''} matched</span>
+                      <span>
+                        {request.matchedDonors.length} donor
+                        {request.matchedDonors.length !== 1 ? 's' : ''} matched
+                      </span>
                     </div>
                   )}
                 </div>
 
-                <div className="pt-4 border-t border-border flex gap-2">
-                  <Button variant="outline" className="flex-1 border-border bg-transparent" size="sm">
-                    View Details
+                <div className="pt-4 border-t border-border flex gap-3 sm:gap-4">
+                  <Button variant="outline" className="flex-1" size="sm" asChild>
+                    <Link href={`/dashboard/requests/${request.id}`}>View Details</Link>
                   </Button>
+
                   {request.status === 'open' && (
-                    <Button className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90" size="sm">
-                      Offer Blood
+                    <Button
+                      className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                      size="sm"
+                      onClick={() => handleOfferBlood(request)}
+                      disabled={offeringId === request.id || (request.quantity ?? 0) <= 0}
+                    >
+                      {offeringId === request.id ? 'Offering...' : 'Offer Blood'}
                     </Button>
                   )}
                 </div>
