@@ -1,11 +1,7 @@
-"use client";
-
 import React from "react"
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
-import { AuthProvider } from '@/lib/contexts/AuthContext'
-import { Toaster } from '@/components/ui/toaster'
+import { Providers } from './providers'  // ← Import the wrapper
 import './globals.css'
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -42,11 +38,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`font-sans antialiased`}>
-        <AuthProvider>
-          {children}
-          <Toaster />
-        </AuthProvider>
-        <Analytics />
+        <Providers>{children}</Providers>  {/* ← Use the wrapper */}
       </body>
     </html>
   )
