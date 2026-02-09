@@ -345,12 +345,6 @@ NEXT_PUBLIC_FIREBASE_APP_ID=
 - [ ] User ratings and reviews
 - [ ] Medical professional verification
 
-## Support
-
-For issues and questions, please contact:
-- Email: support@bloodconnect.com
-- Phone: +1 (555) 123-4567
-
 ## License
 
 This project is proprietary software. All rights reserved.
